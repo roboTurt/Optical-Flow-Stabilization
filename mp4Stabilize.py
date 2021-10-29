@@ -66,6 +66,8 @@ if __name__ == '__main__':
 
         transforms = []
         last_frame_bw = cv2.cvtColor(video.read()[1], cv2.COLOR_BGR2GRAY)
+        plot_pts=list()
+        i=0
         while True:
           # Detect feature points in previous frame
           features = cv2.goodFeaturesToTrack(
@@ -94,7 +96,7 @@ if __name__ == '__main__':
           # feature positions in previous and current frames.
           valid, _ = np.where(status == 1)
           m, _ = cv2.estimateAffine2D(features[valid], new_features[valid])
-
+          plot_pts.append(new_features[valid])
           # Translation and angle of rotation
           dx = m[0,2]
           dy = m[1,2]
@@ -132,7 +134,9 @@ if __name__ == '__main__':
 
           # Fix border artifacts
           frame_stabilized = zoom_in(frame_stabilized, zoom=args.zoom)
-
+          for pt in plot_pts[i]:
+            cv2.circle(frame, tuple(pt[0]),3,(0,255,0),2)
+          i+=1
           # Write the frame to the file
           frame_out = cv2.hconcat([frame, frame_stabilized])
 
