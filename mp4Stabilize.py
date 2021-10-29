@@ -1,19 +1,22 @@
 #Import numpy and OpenCV
 import numpy as np
 import cv2
-
+import ipdb as pdb 
+import pandas as pd
 def movingAverage(curve, radius):
-  window_size = 2 * radius + 1
-  # Define the filter
-  f = np.ones(window_size)/window_size
-  # Add padding to the boundaries
-  curve_pad = np.lib.pad(curve, (radius, radius), 'edge')
-  # Apply convolution
-  curve_smoothed = np.convolve(curve_pad, f, mode='same')
-  # Remove padding
-  curve_smoothed = curve_smoothed[radius:-radius]
-  # return smoothed curve
-  return curve_smoothed
+  # pdb.set_trace()
+  # window_size = 2 * radius + 1
+  # # Define the filter
+  # f = np.ones(window_size)/window_size
+  # # Add padding to the boundaries
+  # curve_pad = np.lib.pad(curve, (radius, radius), 'edge')
+  # # Apply convolution
+  # curve_smoothed = np.convolve(curve_pad, f, mode='same')
+  # # Remove padding
+  # curve_smoothed = curve_smoothed[radius:-radius]
+  # # return smoothed curve
+  # pd.ewma(curve, span=radius)[-1]
+  return np.array(pd.DataFrame(curve).ewm(span=radius).mean())[:,0]
 
 def smooth(trajectory):
   
@@ -55,7 +58,7 @@ fourcc = cv2.VideoWriter_fourcc(*'MPEG')
 print('wiodth,height',w,h)
 # Set up output video
 fps = 30
-out = cv2.VideoWriter('video_out.avi', fourcc, fps, (w*2, h))
+out = cv2.VideoWriter('video_tg.avi', fourcc, fps, (w*2, h))
 
 
 _, prev = cap.read()
@@ -64,7 +67,7 @@ prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
 # Pre-define transformation-store array
 
 transforms = np.zeros((n_frames-1, 3), np.float32)
-
+pt_list=list()
 for i in range(n_frames-2):
   # Detect feature points in previous frame
   prev_pts = cv2.goodFeaturesToTrack(prev_gray,
@@ -90,7 +93,7 @@ for i in range(n_frames-2):
   idx = np.where(status==1)[0]
   prev_pts = prev_pts[idx]
   curr_pts = curr_pts[idx]
-
+  pt_list.append(curr_pts)
   #Find transformation matrix
   m = cv2.estimateAffine2D(prev_pts, curr_pts) #will only work with OpenCV-3 or less
   m = m[0]
@@ -103,13 +106,14 @@ for i in range(n_frames-2):
 
   # Store transformation
   transforms[i] = [dx,dy,da]
-
+  
   # Move to next frame
   prev_gray = curr_gray
 
   #print("Frame: " + str(i) +  "/" + str(n_frames) + " -  Tracked points : " + str(len(prev_pts)))
 
 # Compute trajectory using cumulative sum of transformations
+#pdb.set_trace()
 trajectory = np.cumsum(transforms, axis=0)
 smoothed_trajectory = smooth(trajectory)
 
@@ -148,14 +152,17 @@ for i in range(n_frames-2):
 
   # Fix border artifacts
   frame_stabilized = fixBorder(frame_stabilized) 
-
+  #print(pt_list[i][0])
+  #pdb.set_trace()
+  for pt in pt_list[i]:
+    cv2.circle(frame, tuple(pt[0]),3,(0,255,0),2)
   # Write the frame to the file
   frame_out = cv2.hconcat([frame, frame_stabilized])
 
   # If the image is too big, resize it.
   if(frame_out.shape[1] > 1920):
     frame_out = cv2.resize(frame_out, (frame_out.shape[1]/2, frame_out.shape[0]/2))
-
+  
   # cv2.imshow("Before and After", frame_out)
   # cv2.waitKey(30)
   print("frame out shape",frame_out.shape)
