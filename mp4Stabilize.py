@@ -1,167 +1,152 @@
-#Import numpy and OpenCV
-import numpy as np
 import cv2
+import numpy as np
+import os
 
-def movingAverage(curve, radius):
-  window_size = 2 * radius + 1
-  # Define the filter
-  f = np.ones(window_size)/window_size
-  # Add padding to the boundaries
-  curve_pad = np.lib.pad(curve, (radius, radius), 'edge')
-  # Apply convolution
-  curve_smoothed = np.convolve(curve_pad, f, mode='same')
-  # Remove padding
-  curve_smoothed = curve_smoothed[radius:-radius]
-  # return smoothed curve
-  return curve_smoothed
+def smooth(trajectory, window=30):
+    smoothed_trajectory = np.copy(trajectory)
 
-def smooth(trajectory):
-  
-  SMOOTHING_RADIUS = 30
-  smoothed_trajectory = np.copy(trajectory)
-  # Filter the x, y and angle curves
-  for i in range(3):
-    smoothed_trajectory[:,i] = movingAverage(trajectory[:,i], radius=SMOOTHING_RADIUS)
+    # For the x, y, and angle trajectories:
+    for i in range(3):
+        # Define the filter
+        window_size = 2 * window + 1
+        f = np.ones(window_size)/window_size
 
-  return smoothed_trajectory
- 
-pathToSourceVideo = "./ThanksgivingOnTheL_Train.mp4"
-# Read input video
+        # Add padding to the boundaries
+        trajectory_pad = np.lib.pad(trajectory[:,i], (window, window), 'edge')
 
-cap = cv2.VideoCapture(pathToSourceVideo)
+        # Apply 1d convolution in time
+        trajectory_smoothed = np.convolve(trajectory_pad, f, mode='same')
+        smoothed_trajectory[:,i] = trajectory_smoothed[window:-window]
 
-# Get frame count
-n_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    return smoothed_trajectory
 
-def fixBorder(frame):
-  s = frame.shape
-  # Scale the image 4% without moving the center
-  T = cv2.getRotationMatrix2D((s[1]/2, s[0]/2), 0, 1.2)
-  frame = cv2.warpAffine(frame, T, (s[1], s[0]))
-  return frame
+def zoom_in(frame, zoom=1.2):
+    """ Zoom in while keeping the image centered """
+    s = frame.shape
+    T = cv2.getRotationMatrix2D((s[1]/2, s[0]/2), 0, zoom)
+    frame = cv2.warpAffine(frame, T, (s[1], s[0]))
+    return frame
 
+if __name__ == '__main__':
+    import argparse
 
-# Get width and height of video stream
+    parser = argparse.ArgumentParser()
+    parser.add_argument('source', nargs='*')
+    parser.add_argument('--smoothing-window', type=int,   default=30)
+    parser.add_argument('--max-corners',      type=int,   default=200)
+    parser.add_argument('--quality-level',    type=float, default=0.01)
+    parser.add_argument('--zoom',             type=float, default=1.2)
+    parser.add_argument('--min-distance',     type=int,   default=30)
+    parser.add_argument('--block-size',       type=int,   default=3)
+    parser.add_argument('--show-frames',      action='store_true')
+    args = parser.parse_args()
 
-w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    if len(args.source) == 0:
+        sources = ["./ThanksgivingOnTheL_Train.mp4"]
+    else:
+        sources = args.source
 
-h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    for source in sources:
+        if not os.path.isfile(source):
+            print(f"{source} is not a valid file.")
+            continue
 
+        video = cv2.VideoCapture(source)
 
-# Define the codec for output video
+        # Get video dimensions and total number of frames.
+        n_frames = int(video.get(cv2.CAP_PROP_FRAME_COUNT))
+        w = int(video.get(cv2.CAP_PROP_FRAME_WIDTH))
+        h = int(video.get(cv2.CAP_PROP_FRAME_HEIGHT))
+        fps = int(video.get(cv2.CAP_PROP_FPS))
 
-fourcc = cv2.VideoWriter_fourcc(*'MPEG')
+        # Use mp4v as the output video codec.
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        outfile = f'{os.path.splitext(source)[0]}_stabilized.mp4'
+        out = cv2.VideoWriter(outfile, fourcc, fps, (w*2, h))
 
-print('wiodth,height',w,h)
-# Set up output video
-fps = 30
-out = cv2.VideoWriter('video_out.avi', fourcc, fps, (w*2, h))
+        transforms = []
+        last_frame_bw = cv2.cvtColor(video.read()[1], cv2.COLOR_BGR2GRAY)
+        while True:
+          # Detect feature points in previous frame
+          features = cv2.goodFeaturesToTrack(
+                  last_frame_bw,
+                  maxCorners=args.max_corners,
+                  qualityLevel=args.quality_level,
+                  minDistance=args.min_distance,
+                  blockSize=args.block_size)
 
+          success, frame = video.read()
+          if not success:
+            break
 
-_, prev = cap.read()
-prev_gray = cv2.cvtColor(prev, cv2.COLOR_BGR2GRAY)
+          # Convert to grayscale
+          frame_bw = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
-# Pre-define transformation-store array
+          # Track features identified in the last frame.
+          new_features, status, _ = cv2.calcOpticalFlowPyrLK(
+                  last_frame_bw,
+                  frame_bw,
+                  features,
+                  None)
 
-transforms = np.zeros((n_frames-1, 3), np.float32)
+          # Using only feature points that exist in both the current
+          # and previous frame, find transformation matrix between
+          # feature positions in previous and current frames.
+          valid, _ = np.where(status == 1)
+          m, _ = cv2.estimateAffine2D(features[valid], new_features[valid])
 
-for i in range(n_frames-2):
-  # Detect feature points in previous frame
-  prev_pts = cv2.goodFeaturesToTrack(prev_gray,
-                                     maxCorners=200,
-                                     qualityLevel=0.01,
-                                     minDistance=30,
-                                     blockSize=3)
+          # Translation and angle of rotation
+          dx = m[0,2]
+          dy = m[1,2]
+          da = np.arctan2(m[1,0], m[0,0])
 
-  # Read next frame
-  success, curr = cap.read()
-  if not success:
-    break 
- # Convert to grayscale
-  curr_gray = cv2.cvtColor(curr, cv2.COLOR_BGR2GRAY) 
+          transforms += [np.array([dx,dy,da])]
 
-  # Calculate optical flow (i.e. track feature points)
-  curr_pts, status, err = cv2.calcOpticalFlowPyrLK(prev_gray, curr_gray, prev_pts, None) 
+          # Move to next frame
+          last_frame_bw = frame_bw
 
-  # Sanity check
-  assert prev_pts.shape == curr_pts.shape 
+        # Integrate frame-to-frame transforms
+        trajectory = np.cumsum(transforms, axis=0)
+        smoothed_trajectory = smooth(trajectory)
 
-  # Filter only valid points
-  idx = np.where(status==1)[0]
-  prev_pts = prev_pts[idx]
-  curr_pts = curr_pts[idx]
+        transforms_smooth = transforms + smoothed_trajectory - trajectory
 
-  #Find transformation matrix
-  m = cv2.estimateAffine2D(prev_pts, curr_pts) #will only work with OpenCV-3 or less
-  m = m[0]
-  # Extract traslation
-  dx = m[0,2]
-  dy = m[1,2]
+        # Reset stream to first frame
+        video.set(cv2.CAP_PROP_POS_FRAMES, 0)
 
-  # Extract rotation angle
-  da = np.arctan2(m[1,0], m[0,0])
+        # Write n_frames-1 transformed frames
+        for dx, dy, da in transforms_smooth:
+          # Read next frame
+          success, frame = video.read()
+          if not success:
+            break
 
-  # Store transformation
-  transforms[i] = [dx,dy,da]
+          # Make a transformation matrix out of smooth transform
+          m = np.array([
+              [np.cos(da), -np.sin(da), dx],
+              [np.sin(da),  np.cos(da), dy],
+          ])
 
-  # Move to next frame
-  prev_gray = curr_gray
+          # Apply affine wrapping to the given frame
+          frame_stabilized = cv2.warpAffine(frame, m, (w,h))
 
-  #print("Frame: " + str(i) +  "/" + str(n_frames) + " -  Tracked points : " + str(len(prev_pts)))
+          # Fix border artifacts
+          frame_stabilized = zoom_in(frame_stabilized, zoom=args.zoom)
 
-# Compute trajectory using cumulative sum of transformations
-trajectory = np.cumsum(transforms, axis=0)
-smoothed_trajectory = smooth(trajectory)
+          # Write the frame to the file
+          frame_out = cv2.hconcat([frame, frame_stabilized])
 
-# Calculate difference in smoothed_trajectory and trajectory
-difference = smoothed_trajectory - trajectory
+          # If the image is too big, resize it.
+          if(frame_out.shape[1] > 1920):
+            frame_out = cv2.resize(
+                    frame_out,
+                    (frame_out.shape[1]/2, frame_out.shape[0]/2)
+            )
 
-# Calculate newer transformation array
-transforms_smooth = transforms + difference
+          if args.show_frames:
+              cv2.imshow("Before | After", frame_out)
+              cv2.waitKey(30)
 
-# Reset stream to first frame
-cap.set(cv2.CAP_PROP_POS_FRAMES, 0) 
-
-# Write n_frames-1 transformed frames
-for i in range(n_frames-2):
-  # Read next frame
-  success, frame = cap.read()
-  if not success:
-    break
-
-  # Extract transformations from the new transformation array
-  dx = transforms_smooth[i,0]
-  dy = transforms_smooth[i,1]
-  da = transforms_smooth[i,2]
-
-  # Reconstruct transformation matrix accordingly to new values
-  m = np.zeros((2,3), np.float32)
-  m[0,0] = np.cos(da)
-  m[0,1] = -np.sin(da)
-  m[1,0] = np.sin(da)
-  m[1,1] = np.cos(da)
-  m[0,2] = dx
-  m[1,2] = dy
-
-  # Apply affine wrapping to the given frame
-  frame_stabilized = cv2.warpAffine(frame, m, (w,h))
-
-  # Fix border artifacts
-  frame_stabilized = fixBorder(frame_stabilized) 
-
-  # Write the frame to the file
-  frame_out = cv2.hconcat([frame, frame_stabilized])
-
-  # If the image is too big, resize it.
-  if(frame_out.shape[1] > 1920):
-    frame_out = cv2.resize(frame_out, (frame_out.shape[1]/2, frame_out.shape[0]/2))
-
-  # cv2.imshow("Before and After", frame_out)
-  # cv2.waitKey(30)
-  print("frame out shape",frame_out.shape)
-  out.write(frame_out)
-
-
-
-cv2.destroyAllWindows()
-out.release()
+          out.write(frame_out)
+        cv2.destroyAllWindows()
+        out.release()
