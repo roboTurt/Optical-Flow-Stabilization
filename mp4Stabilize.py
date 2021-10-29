@@ -135,7 +135,7 @@ if __name__ == '__main__':
           # Fix border artifacts
           frame_stabilized = zoom_in(frame_stabilized, zoom=args.zoom)
           for pt in plot_pts[i]:
-            cv2.circle(frame, tuple(pt[0]),3,(0,255,0),2)
+            cv2.circle(frame, tuple(pt[0].astype(np.int)),3,(0,255,0),2)
           i+=1
           # Write the frame to the file
           frame_out = cv2.hconcat([frame, frame_stabilized])
