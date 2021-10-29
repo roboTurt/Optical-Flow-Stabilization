@@ -52,10 +52,10 @@ h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
 fourcc = cv2.VideoWriter_fourcc(*'MPEG')
 
- 
+print('wiodth,height',w,h)
 # Set up output video
 fps = 30
-out = cv2.VideoWriter('video_out.avi', fourcc, fps, (w, h))
+out = cv2.VideoWriter('video_out.avi', fourcc, fps, (w*2, h))
 
 
 _, prev = cap.read()
@@ -107,7 +107,7 @@ for i in range(n_frames-2):
   # Move to next frame
   prev_gray = curr_gray
 
-  print("Frame: " + str(i) +  "/" + str(n_frames) + " -  Tracked points : " + str(len(prev_pts)))
+  #print("Frame: " + str(i) +  "/" + str(n_frames) + " -  Tracked points : " + str(len(prev_pts)))
 
 # Compute trajectory using cumulative sum of transformations
 trajectory = np.cumsum(transforms, axis=0)
@@ -156,9 +156,12 @@ for i in range(n_frames-2):
   if(frame_out.shape[1] > 1920):
     frame_out = cv2.resize(frame_out, (frame_out.shape[1]/2, frame_out.shape[0]/2))
 
-  cv2.imshow("Before and After", frame_out)
-  cv2.waitKey(30)
+  # cv2.imshow("Before and After", frame_out)
+  # cv2.waitKey(30)
+  print("frame out shape",frame_out.shape)
   out.write(frame_out)
 
 
 
+cv2.destroyAllWindows()
+out.release()
